@@ -75,12 +75,6 @@ Rules:
         },
       });
 
-      // Increment AI credit usage
-      await prisma.workspace.update({
-        where: { id: workspaceId },
-        data: { aiCreditsUsed: { increment: 1 } },
-      });
-
       res.json({ milestones: result.milestones, generationId: log.id });
     } catch (err) {
       console.error("[ai/roadmap-generator]", err);
@@ -232,7 +226,6 @@ Rules: 2-5 key results, 3-8 tasks. Return ONLY the JSON.`;
           accepted: null,
         },
       });
-      await prisma.workspace.update({ where: { id: workspaceId }, data: { aiCreditsUsed: { increment: 1 } } });
 
       res.json(result);
     } catch (err) {
@@ -298,7 +291,6 @@ aiRouter.post(
           accepted: true,
         },
       });
-      await prisma.workspace.update({ where: { id: workspaceId }, data: { aiCreditsUsed: { increment: 1 } } });
 
       res.json({ insight });
     } catch (err) {
@@ -370,7 +362,6 @@ Return ONLY the JSON.`;
           accepted: null, // user must confirm
         },
       });
-      await prisma.workspace.update({ where: { id: workspaceId }, data: { aiCreditsUsed: { increment: 1 } } });
 
       res.json({ action });
     } catch (err) {

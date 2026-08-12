@@ -96,23 +96,33 @@ enum MemberRole {
 }
 
 model Workspace {
-  id        String    @id @default(cuid())
-  name      String
-  slug      String    @unique
-  plan      PlanTier  @default(free)
-  ownerId   String
-  owner     User      @relation("WorkspaceOwner", fields: [ownerId], references: [id])
-  aiCreditsUsed Int   @default(0) // resets monthly
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  name              String
+  slug              String    @unique
+  plan              PlanTier  @default(free)
+  ownerId           String
+  owner             User      @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  aiCreditsUsed     Int       @default(0) // resets monthly
+  /// Pre-computed total bytes of document content stored in this workspace.
+  /// Incremented/decremented atomically on document create/delete/update.
+  storageUsedBytes  BigInt    @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  members     WorkspaceMember[]
-  goals       Goal[]
-  sprints     Sprint[]
-  documents   Document[]
-  boardItems  BoardItem[]
+  // ── Stripe Billing ──
+  stripeCustomerId         String?   @unique
+  stripeSubscriptionId     String?   @unique
+  stripePriceId            String?
+  stripeCurrentPeriodEnd   DateTime?
+  stripeCancelAtPeriodEnd  Boolean   @default(false)
+
+  members      WorkspaceMember[]
+  goals        Goal[]
+  sprints      Sprint[]
+  documents    Document[]
+  boardItems   BoardItem[]
   activityLogs ActivityLog[]
-  aiLogs      AIGenerationLog[]
+  aiLogs       AIGenerationLog[]
 
   @@index([ownerId])
 }
@@ -236,6 +246,8 @@ model Task {
   @@index([assigneeId])
   @@index([sprintId])
   @@index([status])
+  @@index([milestoneId, order])
+  @@index([sprintId, status])
 }
 
 // ─────────────────────────────────────────────
@@ -331,6 +343,9 @@ model BoardItem {
   linkedMilestone Milestone? @relation("MilestoneBoardItems", fields: [linkedMilestoneId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
+  @@index([linkedGoalId])
+  @@index([linkedMilestoneId])
+  @@index([linkedTaskId])
 }
 
 // ─────────────────────────────────────────────
@@ -368,6 +383,7 @@ model Comment {
   @@index([goalId])
   @@index([milestoneId])
   @@index([taskId])
+  @@index([documentId])
 }
 
 // ─────────────────────────────────────────────
@@ -390,6 +406,7 @@ model ActivityLog {
   @@index([workspaceId])
   @@index([entityId])
   @@index([createdAt])
+  @@index([workspaceId, createdAt])
 }
 
 // ─────────────────────────────────────────────

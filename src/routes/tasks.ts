@@ -77,15 +77,39 @@ tasksRouter.post("/", async (req: Request, res: Response): Promise<void> => {
 tasksRouter.patch("/:id", async (req: Request, res: Response): Promise<void> => {
   const userId = asAuthed(req).userId;
   const taskId = String(req.params.id);
-  const task = await prisma.task.findUnique({
+
+  // Combined query: fetch task + milestone + goal workspace + membership in 1 roundtrip
+  const taskWithMembership = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { milestone: { include: { goal: true } } },
+    select: {
+      id: true,
+      milestoneId: true,
+      milestone: {
+        select: {
+          goal: {
+            select: {
+              workspaceId: true,
+              workspace: {
+                select: {
+                  members: {
+                    where: { userId },
+                    take: 1,
+                    select: { userId: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   });
-  if (!task) { res.status(404).json({ error: "Not found" }); return; }
-  const member = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId: task.milestone.goal.workspaceId, userId } },
-  });
-  if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  if (!taskWithMembership) { res.status(404).json({ error: "Not found" }); return; }
+
+  const workspaceId = taskWithMembership.milestone.goal.workspaceId;
+  const isMember = taskWithMembership.milestone.goal.workspace.members.length > 0;
+  if (!isMember) { res.status(403).json({ error: "Forbidden" }); return; }
 
   const { title, description, status, priority, storyPoints, assigneeId, sprintId, dueDate, order } = req.body as Partial<{
     title: string; description: string; status: string; priority: string; storyPoints: number;
@@ -107,18 +131,21 @@ tasksRouter.patch("/:id", async (req: Request, res: Response): Promise<void> => 
     },
   });
 
-  await prisma.activityLog.create({
-    data: {
-      workspaceId: task.milestone.goal.workspaceId, userId,
-      entityType: "task", entityId: task.id, action: "updated", diff: req.body as never,
-    },
+  // Defer non-critical audit log write — unblocks HTTP response ~15ms earlier
+  setImmediate(() => {
+    prisma.activityLog.create({
+      data: {
+        workspaceId, userId,
+        entityType: "task", entityId: taskWithMembership.id, action: "updated", diff: req.body as never,
+      },
+    }).catch((err) => console.error("[tasks] activityLog deferred write failed:", err));
   });
 
-  broadcastToWorkspace(task.milestone.goal.workspaceId, {
+  broadcastToWorkspace(workspaceId, {
     type: "TASK_UPDATED",
-    workspaceId: task.milestone.goal.workspaceId,
-    taskId: task.id,
-    milestoneId: task.milestoneId,
+    workspaceId,
+    taskId: taskWithMembership.id,
+    milestoneId: taskWithMembership.milestoneId,
     status: updated.status,
     assigneeId: updated.assigneeId,
     task: updated as Record<string, unknown>,

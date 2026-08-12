@@ -19,7 +19,7 @@ const createSchema = z.object({
   status: z.enum(["draft", "active", "completed", "cancelled"]).optional(),
 });
 
-// GET /api/goals?workspaceId=
+// GET /api/goals?workspaceId=&limit=&cursor=
 goalsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   const userId = asAuthed(req).userId;
   const workspaceId = req.query.workspaceId ? String(req.query.workspaceId) : "";
@@ -28,12 +28,49 @@ goalsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   const member = await verifyMember(workspaceId, userId);
   if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
 
+  const limit = Math.min(
+    req.query.limit ? parseInt(String(req.query.limit), 10) : 50,
+    100
+  );
+  const cursor = req.query.cursor ? String(req.query.cursor) : undefined;
+
   const goals = await prisma.goal.findMany({
     where: { workspaceId },
-    include: { milestones: { include: { tasks: { orderBy: { order: "asc" } } }, orderBy: { order: "asc" } } },
+    take: limit + 1,
+    skip: cursor ? 1 : 0,
+    cursor: cursor ? { id: cursor } : undefined,
+    select: {
+      id: true,
+      title: true,
+      objective: true,
+      status: true,
+      healthScore: true,
+      targetDate: true,
+      ownerId: true,
+      createdAt: true,
+      updatedAt: true,
+      milestones: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          status: true,
+          targetDate: true,
+          startDate: true,
+          order: true,
+          _count: { select: { tasks: true } },
+        },
+      },
+    },
     orderBy: { createdAt: "desc" },
   });
-  res.json({ goals });
+
+  const hasNext = goals.length > limit;
+  const paginatedGoals = hasNext ? goals.slice(0, -1) : goals;
+  const nextCursor = hasNext ? paginatedGoals[paginatedGoals.length - 1].id : null;
+
+  res.json({ goals: paginatedGoals, nextCursor, hasNext });
 });
 
 // POST /api/goals

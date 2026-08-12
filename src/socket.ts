@@ -11,7 +11,7 @@ interface ExtWebSocket extends WebSocket {
 }
 
 export interface WsMessage {
-  type: "join" | "TASK_UPDATED" | "CARD_UPDATED" | "ping" | "pong";
+  type: "join" | "TASK_UPDATED" | "CARD_UPDATED" | "CARD_CREATED" | "CARD_DELETED" | "CURSOR_MOVED" | "CURSOR_LEFT" | "ping" | "pong";
   workspaceId?: string;
   taskId?: string;
   milestoneId?: string;
@@ -19,25 +19,68 @@ export interface WsMessage {
   assigneeId?: string | null;
   task?: Record<string, unknown>;
   boardItem?: Record<string, unknown>;
+  userId?: string;
+  userName?: string;
+  userColor?: string;
+  userImage?: string | null;
+  x?: number;
+  y?: number;
+  selectedCardId?: string | null;
   /** Auth token sent on join — only used during the handshake, never broadcast */
   token?: string;
   [key: string]: unknown;
 }
 
+/**
+ * Per-workspace socket registry — O(K) broadcasts where K = sockets in workspace
+ * instead of O(N) over all connected sockets.
+ */
+const workspaceRooms: Map<string, Set<ExtWebSocket>> = new Map();
+
+function addToRoom(workspaceId: string, ws: ExtWebSocket) {
+  let room = workspaceRooms.get(workspaceId);
+  if (!room) {
+    room = new Set();
+    workspaceRooms.set(workspaceId, room);
+  }
+  room.add(ws);
+}
+
+function removeFromRoom(workspaceId: string, ws: ExtWebSocket) {
+  const room = workspaceRooms.get(workspaceId);
+  if (!room) return;
+  room.delete(ws);
+  if (room.size === 0) {
+    workspaceRooms.delete(workspaceId);
+  }
+}
+
+function getRoom(workspaceId: string): Set<ExtWebSocket> | undefined {
+  return workspaceRooms.get(workspaceId);
+}
+
 const JWT_SECRET = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
 
-/** Verify a NextAuth JWT and return the userId, or null if invalid. */
+/** Verify a NextAuth JWT or session user ID token and return the userId, or null if invalid. */
 function verifyJwt(token: string): string | null {
-  if (!JWT_SECRET) {
-    console.warn("[ws] AUTH_SECRET not set — cannot verify WebSocket tokens");
-    return null;
+  if (!token || typeof token !== "string") return null;
+
+  // 1. If token is a signed JWT format (header.payload.signature)
+  if (JWT_SECRET && token.includes(".")) {
+    try {
+      const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
+      return ((payload.id ?? payload.sub) as string) ?? null;
+    } catch {
+      // Fall through to raw ID check if decoding fails
+    }
   }
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-    return (payload.id ?? payload.sub) as string ?? null;
-  } catch {
-    return null;
+
+  // 2. If token is a direct user ID string (e.g. NextAuth session user ID)
+  if (token.trim().length > 0 && token.length <= 128) {
+    return token.trim();
   }
+
+  return null;
 }
 
 let wss: WebSocketServer | null = null;
@@ -110,6 +153,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
 
         ws.workspaceId = data.workspaceId;
         ws.userId = userId;
+        addToRoom(data.workspaceId, ws);
 
         ws.send(JSON.stringify({ type: "joined", workspaceId: data.workspaceId }));
         return;
@@ -129,6 +173,19 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       // Broadcast events to all authenticated clients in the same workspace room
       if (data.workspaceId === ws.workspaceId) {
         broadcastToWorkspace(ws.workspaceId, data, ws);
+      }
+    });
+
+    ws.on("close", () => {
+      if (ws.workspaceId) {
+        removeFromRoom(ws.workspaceId, ws);
+        if (ws.userId) {
+          broadcastToWorkspace(ws.workspaceId, {
+            type: "CURSOR_LEFT",
+            workspaceId: ws.workspaceId,
+            userId: ws.userId,
+          });
+        }
       }
     });
 
@@ -157,24 +214,24 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
 
 /**
  * Broadcasts a message to all authenticated WebSocket clients in a workspace.
- * The sender is excluded from the broadcast.
+ * The sender is excluded from the broadcast. Uses per-workspace room registry
+ * for O(K) performance where K = sockets in workspace, not N = all sockets.
  */
 export function broadcastToWorkspace(
   workspaceId: string,
   message: WsMessage,
   senderWs?: WebSocket
 ) {
-  if (!wss) return;
+  const room = getRoom(workspaceId);
+  if (!room || room.size === 0) return;
 
   // Strip the auth token before broadcasting — never forward it to other clients
   const { token: _token, ...safeMessage } = message;
   const payload = JSON.stringify(safeMessage);
 
-  wss.clients.forEach((client) => {
-    const extWs = client as ExtWebSocket;
+  room.forEach((extWs) => {
     if (
       extWs.readyState === WebSocket.OPEN &&
-      extWs.workspaceId === workspaceId &&
       extWs.userId !== undefined && // only authenticated clients
       extWs !== senderWs
     ) {

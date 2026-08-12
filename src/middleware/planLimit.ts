@@ -58,8 +58,73 @@ export function checkPlanLimit(
 }
 
 /**
+ * Atomically verifies AI credit availability AND consumes one credit in a
+ * single database operation. This eliminates the TOCTOU race condition where
+ * N concurrent requests could each pass the middleware check before any of
+ * them increment aiCreditsUsed.
+ *
+ * @returns { consumed: boolean; reason?: string; upgradePrompt?: string }
+ */
+export async function consumeAICredit(
+  workspaceId: string
+): Promise<{ consumed: boolean; reason?: string; upgradePrompt?: string }> {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { plan: true, aiCreditsUsed: true },
+  });
+
+  if (!workspace) {
+    return { consumed: false, reason: "Workspace not found" };
+  }
+
+  const limit = PLAN_LIMITS[workspace.plan].ai_credit;
+
+  if (typeof limit === "boolean") {
+    if (!limit) {
+      return {
+        consumed: false,
+        reason: `ai credit is not available on the ${workspace.plan} plan.`,
+        upgradePrompt: `Upgrade your plan to access this feature.`,
+      };
+    }
+  }
+
+  if (limit === -1) {
+    const result = await prisma.workspace.updateMany({
+      where: { id: workspaceId },
+      data: { aiCreditsUsed: { increment: 1 } },
+    });
+    return { consumed: result.count > 0 };
+  }
+
+  const check = checkPlanLimit(workspace.plan, "ai_credit", workspace.aiCreditsUsed);
+  if (!check.allowed) {
+    return { consumed: false, reason: check.reason, upgradePrompt: check.upgradePrompt };
+  }
+
+  const result = await prisma.workspace.updateMany({
+    where: {
+      id: workspaceId,
+      aiCreditsUsed: { lt: limit as number },
+    },
+    data: { aiCreditsUsed: { increment: 1 } },
+  });
+
+  if (result.count === 0) {
+    return {
+      consumed: false,
+      reason: `Your ${workspace.plan} plan allows up to ${limit} for ai credit.`,
+      upgradePrompt: "Upgrade your plan to increase this limit.",
+    };
+  }
+
+  return { consumed: true };
+}
+
+/**
  * Express middleware factory — checks a specific plan limit before proceeding.
- * Usage: router.post("/...", requirePlanFeature("ai_credit", workspaceIdGetter), handler)
+ * NOTE: For ai_credit, prefer consumeAICredit() inside the route handler to
+ * atomically reserve the credit and prevent race conditions.
  */
 export function requirePlanFeature(
   feature: Feature,
@@ -73,6 +138,17 @@ export function requirePlanFeature(
       return;
     }
 
+    if (feature === "ai_credit") {
+      const result = await consumeAICredit(workspaceId);
+      if (!result.consumed) {
+        res.status(403).json({ error: result.reason, upgradePrompt: result.upgradePrompt });
+        return;
+      }
+      (req as Request & { _aiCreditConsumed?: boolean })._aiCreditConsumed = true;
+      next();
+      return;
+    }
+
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { plan: true, aiCreditsUsed: true, _count: { select: { members: true } } },
@@ -83,7 +159,7 @@ export function requirePlanFeature(
       return;
     }
 
-    const count = feature === "ai_credit" ? workspace.aiCreditsUsed : workspace._count.members;
+    const count = workspace._count.members;
     const check = checkPlanLimit(workspace.plan, feature, count);
 
     if (!check.allowed) {

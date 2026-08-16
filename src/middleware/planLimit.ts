@@ -1,7 +1,6 @@
 import { PlanTier } from "@prisma/client";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma";
-import { asAuthed } from "./auth";
 
 type Feature =
   | "create_workspace" | "invite_member" | "ai_credit"

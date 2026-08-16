@@ -105,17 +105,47 @@ goalsRouter.post("/", async (req: Request, res: Response): Promise<void> => {
 goalsRouter.get("/:id", async (req: Request, res: Response): Promise<void> => {
   const userId = asAuthed(req).userId;
   const goalId = String(req.params.id);
+
+  // 1. Verify existence + membership first (lightweight lookup)
+  const goalMeta = await prisma.goal.findUnique({
+    where: { id: goalId },
+    select: {
+      id: true,
+      workspaceId: true,
+      workspace: {
+        select: {
+          members: {
+            where: { userId },
+            take: 1,
+            select: { userId: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!goalMeta) { res.status(404).json({ error: "Not found" }); return; }
+  if (!goalMeta.workspace.members.length) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  // 2. Fetch full goal relations now that auth is verified
   const goal = await prisma.goal.findUnique({
     where: { id: goalId },
     include: {
-      milestones: { include: { tasks: { orderBy: { order: "asc" } }, documents: true }, orderBy: { order: "asc" } },
-      documents: true,
-      comments: { include: { author: { select: { id: true, name: true, image: true } } }, orderBy: { createdAt: "asc" } },
+      milestones: {
+        include: {
+          tasks: { orderBy: { order: "asc" } },
+          documents: { select: { id: true, title: true, authorId: true, createdAt: true, updatedAt: true } },
+        },
+        orderBy: { order: "asc" },
+      },
+      documents: { select: { id: true, title: true, authorId: true, createdAt: true, updatedAt: true } },
+      comments: {
+        include: { author: { select: { id: true, name: true, image: true } } },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
-  if (!goal) { res.status(404).json({ error: "Not found" }); return; }
-  const member = await verifyMember(goal.workspaceId, userId);
-  if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
+
   res.json({ goal });
 });
 

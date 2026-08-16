@@ -8,6 +8,8 @@ interface ExtWebSocket extends WebSocket {
   workspaceId?: string;
   userId?: string;
   isAlive?: boolean;
+  messageCount?: number;
+  lastResetTime?: number;
 }
 
 export interface WsMessage {
@@ -92,6 +94,18 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     });
 
     ws.on("message", async (raw: Buffer | string) => {
+      const now = Date.now();
+      if (!ws.lastResetTime || now - ws.lastResetTime > 1000) {
+        ws.lastResetTime = now;
+        ws.messageCount = 1;
+      } else {
+        ws.messageCount = (ws.messageCount || 0) + 1;
+        if (ws.messageCount > 40) {
+          // Throttled: discard flood to protect event loop
+          return;
+        }
+      }
+
       // Reject oversized messages before parsing
       const rawStr = raw.toString();
       if (rawStr.length > 64_000) {

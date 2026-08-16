@@ -58,7 +58,12 @@ tasksRouter.post("/", async (req: Request, res: Response): Promise<void> => {
   const member = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: ms.goal.workspaceId, userId } } });
   if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const count = await prisma.task.count({ where: { milestoneId } });
+  const maxOrderResult = await prisma.task.aggregate({
+    where: { milestoneId },
+    _max: { order: true },
+  });
+  const order = (maxOrderResult._max.order ?? -1) + 1;
+
   const task = await prisma.task.create({
     data: {
       milestoneId, title, description,
@@ -67,7 +72,7 @@ tasksRouter.post("/", async (req: Request, res: Response): Promise<void> => {
       assigneeId: assigneeId ?? null,
       sprintId: sprintId ?? null,
       dueDate: dueDate ? new Date(dueDate) : null,
-      order: count,
+      order,
     },
   });
   res.status(201).json({ task });

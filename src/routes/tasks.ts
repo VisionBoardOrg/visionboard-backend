@@ -164,7 +164,7 @@ tasksRouter.delete("/:id", async (req: Request, res: Response): Promise<void> =>
   });
   if (!task) { res.status(404).json({ error: "Not found" }); return; }
   const member = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: task.milestone.goal.workspaceId, userId } } });
-  if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (!member || !["admin", "pm"].includes(member.role)) { res.status(403).json({ error: "Only admins and PMs can delete tasks" }); return; }
   await prisma.task.delete({ where: { id: taskId } });
   res.json({ success: true });
 });

@@ -193,12 +193,14 @@ model Milestone {
   title       String
   description String?         @db.Text
   status      MilestoneStatus @default(planned)
-  targetDate  DateTime?
-  startDate   DateTime?
-  dependsOn   String[]        // array of Milestone ids
-  order       Int             @default(0)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  startDate           DateTime?
+  targetDate          DateTime?
+  baselineStartDate   DateTime?
+  baselineTargetDate  DateTime?
+  dependsOn           String[]        // array of Milestone ids
+  order               Int             @default(0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   goal       Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
   tasks      Task[]

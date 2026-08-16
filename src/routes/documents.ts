@@ -139,10 +139,17 @@ documentsRouter.patch("/:id", async (req: Request, res: Response): Promise<void>
 documentsRouter.delete("/:id", async (req: Request, res: Response): Promise<void> => {
   const userId = asAuthed(req).userId;
   const docId = String(req.params.id);
-  const doc = await prisma.document.findUnique({ where: { id: docId }, select: { id: true, workspaceId: true, content: true } });
+  const doc = await prisma.document.findUnique({ where: { id: docId }, select: { id: true, authorId: true, workspaceId: true, content: true } });
   if (!doc) { res.status(404).json({ error: "Not found" }); return; }
   const member = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: doc.workspaceId, userId } } });
   if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const isAuthor = doc.authorId === userId;
+  const isAdmin = member.role === "admin";
+  if (!isAuthor && !isAdmin) {
+    res.status(403).json({ error: "Only the document author or an admin can delete documents" });
+    return;
+  }
 
   const contentBytes = estimateContentBytes(doc.content);
 

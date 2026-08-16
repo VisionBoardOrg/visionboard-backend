@@ -61,26 +61,18 @@ function getRoom(workspaceId: string): Set<ExtWebSocket> | undefined {
 
 const JWT_SECRET = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
 
-/** Verify a NextAuth JWT or session user ID token and return the userId, or null if invalid. */
+/** Verify a NextAuth JWT token and return the userId, or null if invalid. */
 function verifyJwt(token: string): string | null {
-  if (!token || typeof token !== "string") return null;
+  if (!token || typeof token !== "string" || !JWT_SECRET) return null;
 
-  // 1. If token is a signed JWT format (header.payload.signature)
-  if (JWT_SECRET && token.includes(".")) {
-    try {
-      const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-      return ((payload.id ?? payload.sub) as string) ?? null;
-    } catch {
-      // Fall through to raw ID check if decoding fails
-    }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET, {
+      algorithms: ["HS256", "HS512"],
+    }) as Record<string, unknown>;
+    return ((payload.id ?? payload.sub) as string) ?? null;
+  } catch {
+    return null;
   }
-
-  // 2. If token is a direct user ID string (e.g. NextAuth session user ID)
-  if (token.trim().length > 0 && token.length <= 128) {
-    return token.trim();
-  }
-
-  return null;
 }
 
 let wss: WebSocketServer | null = null;

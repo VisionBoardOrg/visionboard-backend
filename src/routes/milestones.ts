@@ -89,7 +89,7 @@ milestonesRouter.delete("/:id", async (req: Request, res: Response): Promise<voi
   const ms = await prisma.milestone.findUnique({ where: { id: milestoneId }, include: { goal: true } });
   if (!ms) { res.status(404).json({ error: "Not found" }); return; }
   const member = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: ms.goal.workspaceId, userId } } });
-  if (!member) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (!member || !["admin", "pm"].includes(member.role)) { res.status(403).json({ error: "Only admins and PMs can delete milestones" }); return; }
   await prisma.milestone.delete({ where: { id: milestoneId } });
   res.json({ success: true });
 });

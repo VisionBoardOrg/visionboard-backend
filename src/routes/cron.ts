@@ -1,14 +1,42 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { callClaudeText } from "../lib/anthropic";
+import crypto from "crypto";
 
 export const cronRouter = Router();
+
+function safeCompare(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    if (bufA.length !== bufB.length) {
+      crypto.timingSafeEqual(bufA, bufA);
+      return false;
+    }
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
+function verifyCronAuth(req: Request): boolean {
+  const token = (req.headers["x-cron-secret"] || req.headers.authorization?.replace(/^Bearer\s+/i, "")) as string | undefined;
+  const expectedSecret = process.env.CRON_SECRET;
+
+  if (!expectedSecret || expectedSecret.length < 16) {
+    if (process.env.NODE_ENV === "production") {
+      return false;
+    }
+    return token ? safeCompare(token, "dev-cron-secret") : false;
+  }
+
+  return token ? safeCompare(token, expectedSecret) : false;
+}
 
 // This endpoint is called by Vercel Cron or an external scheduler.
 // Secure it by checking a secret token in production.
 cronRouter.get("/progress-insights", async (req: Request, res: Response): Promise<void> => {
-  const token = req.headers["x-cron-secret"];
-  if (process.env.NODE_ENV === "production" && token !== process.env.CRON_SECRET) {
+  if (!verifyCronAuth(req)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -70,8 +98,7 @@ cronRouter.get("/progress-insights", async (req: Request, res: Response): Promis
 
 // Automated due-date, milestone delay, and goal health sweeper
 cronRouter.get("/sweeps", async (req: Request, res: Response): Promise<void> => {
-  const token = req.headers["x-cron-secret"];
-  if (process.env.NODE_ENV === "production" && token !== process.env.CRON_SECRET) {
+  if (!verifyCronAuth(req)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

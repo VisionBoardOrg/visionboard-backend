@@ -14,5 +14,20 @@ export function setupCronJobs() {
     }
   });
 
-  console.log("[cron] Scheduled: progress insights daily at 8am UTC");
+  // Run user deletion cleanup daily at midnight (00:00 UTC)
+  cron.schedule("0 0 * * *", async () => {
+    console.log("[cron] Running scheduled user deletion cleanup...");
+    try {
+      const frontendUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+      const res = await fetch(`${frontendUrl}/api/cron/cleanup-users`, {
+        headers: { "x-cron-secret": process.env.CRON_SECRET ?? "dev-cron-secret" },
+      });
+      const data = await res.json();
+      console.log("[cron] User deletion cleanup completed:", data);
+    } catch (e) {
+      console.error("[cron] Scheduled user cleanup job failed:", e);
+    }
+  });
+
+  console.log("[cron] Scheduled: progress insights daily at 8am UTC & user cleanup daily at midnight UTC");
 }

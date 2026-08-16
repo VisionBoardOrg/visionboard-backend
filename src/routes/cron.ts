@@ -67,3 +67,58 @@ cronRouter.get("/progress-insights", async (req: Request, res: Response): Promis
     res.status(500).json({ error: "Failed to execute cron job due to database error" });
   }
 });
+
+// Automated due-date, milestone delay, and goal health sweeper
+cronRouter.get("/sweeps", async (req: Request, res: Response): Promise<void> => {
+  const token = req.headers["x-cron-secret"];
+  if (process.env.NODE_ENV === "production" && token !== process.env.CRON_SECRET) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    // 1. Task due dates & overdue
+    const [overdueTasks, dueSoonTasks] = await Promise.all([
+      prisma.task.findMany({
+        where: { status: { not: "done" }, dueDate: { lt: now } },
+        select: { id: true, title: true, dueDate: true, assigneeId: true },
+      }),
+      prisma.task.findMany({
+        where: { status: { not: "done" }, dueDate: { gte: now, lte: twentyFourHoursFromNow } },
+        select: { id: true, title: true, dueDate: true, assigneeId: true },
+      }),
+    ]);
+
+    // 2. Auto-mark overdue milestones as delayed
+    const slippingMilestones = await prisma.milestone.findMany({
+      where: { status: { notIn: ["completed", "delayed"] }, targetDate: { lt: now } },
+      select: { id: true, title: true, targetDate: true },
+    });
+
+    if (slippingMilestones.length > 0) {
+      await prisma.milestone.updateMany({
+        where: { id: { in: slippingMilestones.map((m) => m.id) } },
+        data: { status: "delayed" },
+      });
+    }
+
+    res.json({
+      success: true,
+      timestamp: now.toISOString(),
+      tasks: {
+        overdueCount: overdueTasks.length,
+        dueSoonCount: dueSoonTasks.length,
+      },
+      milestones: {
+        newlyDelayedCount: slippingMilestones.length,
+        delayedIds: slippingMilestones.map((m) => m.id),
+      },
+    });
+  } catch (error) {
+    console.error("[cron/sweeps] Sweeper failed:", error);
+    res.status(500).json({ error: "Sweeper error" });
+  }
+});

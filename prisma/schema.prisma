@@ -35,6 +35,8 @@ model User {
   activityLogs  ActivityLog[]
   aiLogs        AIGenerationLog[]
   documents     Document[]      @relation("DocumentAuthor")
+  notifications Notification[]  @relation("UserNotifications")
+  triggeredNotifications Notification[] @relation("ActorNotifications")
 }
 
 model Account {
@@ -108,6 +110,8 @@ model Workspace {
   storageUsedBytes  BigInt    @default(0)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  notifications     Notification[]
+
 
   // ── Stripe Billing ──
   stripeCustomerId         String?   @unique
@@ -393,7 +397,7 @@ model Comment {
 model ActivityLog {
   id          String   @id @default(cuid())
   workspaceId String
-  userId      String
+  userId      String?
   entityType  String   // "goal" | "milestone" | "task" | "document"
   entityId    String
   action      String   // "created" | "updated" | "deleted" | "moved" | "assigned"
@@ -401,9 +405,10 @@ model ActivityLog {
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
+  @@index([userId])
   @@index([entityId])
   @@index([createdAt])
   @@index([workspaceId, createdAt])
@@ -468,3 +473,59 @@ model WaitlistEntry {
   @@index([status])
   @@index([position])
 }
+
+model Notification {
+  id          String           @id @default(cuid())
+  userId      String
+  workspaceId String?
+  actorId     String?
+  type        NotificationType
+  title       String
+  message     String
+  entityType  String?
+  entityId    String?
+  link        String?
+  read        Boolean          @default(false)
+  readAt      DateTime?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+
+  user        User             @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actor       User?            @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: SetNull)
+  workspace   Workspace?       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  task_assigned
+  task_status_changed
+  task_blocked
+  task_due_soon
+  task_overdue
+  milestone_delayed
+  milestone_completed
+  goal_at_risk
+  goal_health_degraded
+  comment_mention
+  comment_created
+  workspace_invite
+  role_changed
+  quota_warning
+  quota_exceeded
+  billing_payment_failed
+  billing_payment_succeeded
+  system_alert
+
+  // Legacy uppercase variants for backward compatibility
+  TASK_ASSIGNED
+  COMMENT_ADDED
+  USER_MENTIONED
+  GOAL_HEALTH_WARNING
+  MILESTONE_DELAYED
+  WORKSPACE_INVITE
+}
+
